@@ -247,6 +247,11 @@ class InsertTextRequest(BaseModel):
     file_source: Optional[str] = Field(
         default=None, min_length=0, description="File Source"
     )
+    context_chunk_header: Optional[str] = Field(
+        default=None,
+        min_length=0,
+        description="Optional header emitted with each retrieved context chunk for this text.",
+    )
 
     @field_validator("text", mode="after")
     @classmethod
@@ -282,6 +287,11 @@ class InsertTextsRequest(BaseModel):
     )
     file_sources: Optional[list[str]] = Field(
         default=None, min_length=0, description="Sources of the texts"
+    )
+    context_chunk_headers: Optional[list[str]] = Field(
+        default=None,
+        min_length=0,
+        description="Optional per-text headers emitted with retrieved context chunks.",
     )
 
     @field_validator("texts", mode="after")
@@ -2121,6 +2131,7 @@ async def pipeline_index_texts(
     texts: List[str],
     file_sources: List[str] = None,
     track_id: str = None,
+    context_chunk_headers: List[str] | None = None,
 ):
     """Index a list of texts with track_id
 
@@ -2129,6 +2140,7 @@ async def pipeline_index_texts(
         texts: The texts to index
         file_sources: Sources of the texts
         track_id: Optional tracking ID
+        context_chunk_headers: Optional per-text context chunk headers
     """
     if not texts:
         return
@@ -2141,12 +2153,15 @@ async def pipeline_index_texts(
         raise ValueError("A valid file source is required for each text")
     if len(set(normalized_file_sources)) != len(normalized_file_sources):
         raise ValueError("File sources must be unique by filename")
+    if context_chunk_headers is not None and len(context_chunk_headers) != len(texts):
+        raise ValueError("Number of context chunk headers must match texts")
 
     await rag.apipeline_enqueue_documents(
         input=texts,
         file_paths=normalized_file_sources,
         track_id=track_id,
         process_options=PROCESS_OPTION_CHUNK_FIXED,
+        context_chunk_headers=context_chunk_headers,
     )
     await rag.apipeline_process_enqueue_documents()
 
@@ -3042,6 +3057,9 @@ def create_document_routes(
                         [request.text],
                         file_sources=[normalized_file_source],
                         track_id=track_id,
+                        context_chunk_headers=[request.context_chunk_header]
+                        if request.context_chunk_header is not None
+                        else None,
                     )
                 finally:
                     await _release_enqueue_slot(rag)
@@ -3114,6 +3132,14 @@ def create_document_routes(
                     detail="A valid file_source is required for each text",
                 )
 
+            if request.context_chunk_headers is not None and len(
+                request.context_chunk_headers
+            ) != len(request.texts):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Number of context_chunk_headers must match texts",
+                )
+
             normalized_file_sources = [
                 normalize_file_path(file_source) for file_source in request.file_sources
             ]
@@ -3155,6 +3181,7 @@ def create_document_routes(
                         request.texts,
                         file_sources=normalized_file_sources,
                         track_id=track_id,
+                        context_chunk_headers=request.context_chunk_headers,
                     )
                 finally:
                     await _release_enqueue_slot(rag)

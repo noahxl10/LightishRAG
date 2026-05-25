@@ -92,6 +92,20 @@ def _warn_deprecated_query_model_func(context: str) -> None:
     )
 
 
+def _context_chunk_payload(chunk: dict[str, Any]) -> dict[str, str]:
+    header = str(chunk.get("context_chunk_header") or "").strip()
+    if header:
+        return {
+            "reference_id": chunk["reference_id"],
+            "header": header,
+            "content": chunk["content"],
+        }
+    return {
+        "reference_id": chunk["reference_id"],
+        "content": chunk["content"],
+    }
+
+
 def _get_relationship_vdb_timeout_seconds(global_config: dict[str, Any]) -> float:
     """Derive a defensive timeout for relation VDB upserts.
 
@@ -4779,12 +4793,7 @@ async def _build_context_str(
     # The actual tokens may be slightly less than available_chunk_tokens due to deduplication logic
     chunks_context = []
     for i, chunk in enumerate(truncated_chunks):
-        chunks_context.append(
-            {
-                "reference_id": chunk["reference_id"],
-                "content": chunk["content"],
-            }
-        )
+        chunks_context.append(_context_chunk_payload(chunk))
 
     text_units_str = "\n".join(
         json.dumps(text_unit, ensure_ascii=False) for text_unit in chunks_context
@@ -5707,12 +5716,7 @@ async def naive_query(
     # Build chunks_context from processed chunks with reference IDs
     chunks_context = []
     for i, chunk in enumerate(processed_chunks_with_ref_ids):
-        chunks_context.append(
-            {
-                "reference_id": chunk["reference_id"],
-                "content": chunk["content"],
-            }
-        )
+        chunks_context.append(_context_chunk_payload(chunk))
 
     text_units_str = "\n".join(
         json.dumps(text_unit, ensure_ascii=False) for text_unit in chunks_context

@@ -1236,6 +1236,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         ids: str | list[str] | None = None,
         file_paths: str | list[str] | None = None,
         track_id: str | None = None,
+        context_chunk_headers: str | list[str] | None = None,
     ) -> str:
         """Sync Insert documents with checkpoint support
 
@@ -1248,6 +1249,8 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             ids: single string of the document ID or list of unique document IDs, if not provided, MD5 hash IDs will be generated
             file_paths: single string of the file path or list of file paths, used for citation
             track_id: tracking ID for monitoring processing status, if not provided, will be generated
+            context_chunk_headers: optional header text to include with every
+                retrieved context chunk for each document
 
         Returns:
             str: tracking ID for monitoring processing status
@@ -1261,6 +1264,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 ids,
                 file_paths,
                 track_id,
+                context_chunk_headers,
             )
         )
 
@@ -1272,6 +1276,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         ids: str | list[str] | None = None,
         file_paths: str | list[str] | None = None,
         track_id: str | None = None,
+        context_chunk_headers: str | list[str] | None = None,
     ) -> str:
         """Async Insert documents with checkpoint support
 
@@ -1284,6 +1289,8 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             ids: list of unique document IDs, if not provided, MD5 hash IDs will be generated
             file_paths: list of file paths corresponding to each document, used for citation
             track_id: tracking ID for monitoring processing status, if not provided, will be generated
+            context_chunk_headers: optional header text to include with every
+                retrieved context chunk for each document
 
         Returns:
             str: tracking ID for monitoring processing status
@@ -1310,6 +1317,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             file_paths,
             track_id,
             chunk_options=chunk_opts,
+            context_chunk_headers=context_chunk_headers,
         )
         await self.apipeline_process_enqueue_documents()
 
@@ -1468,6 +1476,9 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     else chunk_data["chunk_order_index"]
                 )
                 chunk_id = compute_mdhash_id(chunk_content, prefix="chunk-")
+                context_chunk_header = sanitize_text_for_encoding(
+                    str(chunk_data.get("context_chunk_header") or "").strip()
+                )
 
                 chunk_entry = {
                     "content": chunk_content,
@@ -1480,6 +1491,8 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                     "file_path": file_path,
                     "status": DocStatus.PROCESSED,
                 }
+                if context_chunk_header:
+                    chunk_entry["context_chunk_header"] = context_chunk_header
                 all_chunks_data[chunk_id] = chunk_entry
                 chunk_to_source_map[source_id] = chunk_id
                 update_storage = True

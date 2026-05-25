@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import (
     Any,
     Literal,
+    NotRequired,
     TypedDict,
     TypeVar,
     Callable,
@@ -76,6 +77,7 @@ class TextChunkSchema(TypedDict):
     content: str
     full_doc_id: str
     chunk_order_index: int
+    context_chunk_header: NotRequired[str]
 
 
 T = TypeVar("T")

@@ -3825,6 +3825,9 @@ def convert_to_user_format(
             "file_path": chunk.get("file_path", "unknown_source"),
             "chunk_id": chunk.get("chunk_id", ""),
         }
+        context_chunk_header = str(chunk.get("context_chunk_header") or "").strip()
+        if context_chunk_header:
+            chunk_data["context_chunk_header"] = context_chunk_header
         formatted_chunks.append(chunk_data)
 
     logger.debug(

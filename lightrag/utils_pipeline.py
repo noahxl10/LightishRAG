@@ -41,6 +41,7 @@ def build_chunks_dict_from_chunking_result(
     *,
     doc_id: str,
     file_path: str,
+    context_chunk_header: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Assemble the per-doc chunks dict written into chunks_vdb / text_chunks.
 
@@ -86,12 +87,17 @@ def build_chunks_dict_from_chunking_result(
                 if key and key not in seen:
                     seen.add(key)
                     seed_cache_list.append(key)
-        chunks[chunk_key] = {
+        chunk_entry = {
             **dp,
             "full_doc_id": doc_id,
             "file_path": file_path,
             "llm_cache_list": seed_cache_list,
         }
+        if context_chunk_header and not str(
+            chunk_entry.get("context_chunk_header") or ""
+        ).strip():
+            chunk_entry["context_chunk_header"] = context_chunk_header
+        chunks[chunk_key] = chunk_entry
     return chunks
 
 

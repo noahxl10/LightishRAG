@@ -1380,10 +1380,11 @@ class PostgreSQLDB:
             )
 
     async def _migrate_text_chunks_add_heading_sidecar(self):
-        """Add heading and sidecar JSONB columns to LIGHTRAG_DOC_CHUNKS if missing."""
+        """Add optional chunk-context columns to LIGHTRAG_DOC_CHUNKS if missing."""
         columns_to_add = [
             ("heading", "JSONB NULL DEFAULT '{}'::jsonb"),
             ("sidecar", "JSONB NULL DEFAULT '{}'::jsonb"),
+            ("context_chunk_header", "TEXT NULL"),
         ]
         try:
             existing = await self.query(
@@ -2765,7 +2766,7 @@ class PGKVStorage(BaseKVStorage):
             for i, (k, v) in enumerate(data.items(), start=1):
                 # Tuple order must match SQL: (workspace, id, tokens, chunk_order_index,
                 #   full_doc_id, content, file_path, llm_cache_list, heading, sidecar,
-                #   create_time, update_time)
+                #   context_chunk_header, create_time, update_time)
                 batch_values.append(
                     (
                         self.workspace,
@@ -2778,6 +2779,7 @@ class PGKVStorage(BaseKVStorage):
                         json.dumps(v.get("llm_cache_list", [])),
                         json.dumps(v.get("heading") or {}),
                         json.dumps(v.get("sidecar") or {}),
+                        v.get("context_chunk_header") or None,
                         current_time,
                         current_time,
                     )
@@ -6825,6 +6827,7 @@ TABLES = {
                     llm_cache_list JSONB NULL DEFAULT '[]'::jsonb,
                     heading JSONB NULL DEFAULT '{}'::jsonb,
                     sidecar JSONB NULL DEFAULT '{}'::jsonb,
+                    context_chunk_header TEXT NULL,
                     create_time TIMESTAMP(0) DEFAULT CURRENT_TIMESTAMP,
                     update_time TIMESTAMP(0) DEFAULT CURRENT_TIMESTAMP,
 	                CONSTRAINT LIGHTRAG_DOC_CHUNKS_PK PRIMARY KEY (workspace, id)
@@ -6975,6 +6978,7 @@ SQL_TEMPLATES = {
                                 COALESCE(llm_cache_list, '[]'::jsonb) as llm_cache_list,
                                 COALESCE(heading, '{}'::jsonb) as heading,
                                 COALESCE(sidecar, '{}'::jsonb) as sidecar,
+                                COALESCE(context_chunk_header, '') as context_chunk_header,
                                 EXTRACT(EPOCH FROM create_time)::BIGINT as create_time,
                                 EXTRACT(EPOCH FROM update_time)::BIGINT as update_time
                                 FROM LIGHTRAG_DOC_CHUNKS WHERE workspace=$1 AND id=$2
@@ -6999,6 +7003,7 @@ SQL_TEMPLATES = {
                                   COALESCE(llm_cache_list, '[]'::jsonb) as llm_cache_list,
                                   COALESCE(heading, '{}'::jsonb) as heading,
                                   COALESCE(sidecar, '{}'::jsonb) as sidecar,
+                                  COALESCE(context_chunk_header, '') as context_chunk_header,
                                   EXTRACT(EPOCH FROM create_time)::BIGINT as create_time,
                                   EXTRACT(EPOCH FROM update_time)::BIGINT as update_time
                                    FROM LIGHTRAG_DOC_CHUNKS WHERE workspace=$1 AND id = ANY($2)
@@ -7106,8 +7111,8 @@ SQL_TEMPLATES = {
                                      """,
     "upsert_text_chunk": """INSERT INTO LIGHTRAG_DOC_CHUNKS (workspace, id, tokens,
                       chunk_order_index, full_doc_id, content, file_path, llm_cache_list,
-                      heading, sidecar, create_time, update_time)
-                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                      heading, sidecar, context_chunk_header, create_time, update_time)
+                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                       ON CONFLICT (workspace,id) DO UPDATE
                       SET tokens=EXCLUDED.tokens,
                       chunk_order_index=EXCLUDED.chunk_order_index,
@@ -7117,6 +7122,7 @@ SQL_TEMPLATES = {
                       llm_cache_list=EXCLUDED.llm_cache_list,
                       heading=EXCLUDED.heading,
                       sidecar=EXCLUDED.sidecar,
+                      context_chunk_header=EXCLUDED.context_chunk_header,
                       update_time = EXCLUDED.update_time
                      """,
     "upsert_full_entities": """INSERT INTO LIGHTRAG_FULL_ENTITIES (workspace, id, entity_names, count,

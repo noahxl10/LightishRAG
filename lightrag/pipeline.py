@@ -216,6 +216,7 @@ class _PipelineMixin:
         parse_engine: str | list[str] | None = None,
         process_options: str | list[str] | None = None,
         chunk_options: dict | list[dict] | None = None,
+        context_chunk_headers: str | list[str] | None = None,
         from_scan: bool = False,
     ) -> str:
         """
@@ -254,6 +255,11 @@ class _PipelineMixin:
                 result here; this function is intentionally chunker-
                 config agnostic.  See
                 ``docs/FileProcessingConfiguration-zh.md`` for the schema.
+            context_chunk_headers: optional per-document header text to attach
+                to every chunk created from that document. Query context emits
+                the value as the chunk ``header`` field while preserving the
+                stored chunk body in ``content``. Accepted as a single string
+                broadcast to every input or as a list aligned with ``input``.
             from_scan: when True, the caller is the scan-owned background task
                 that already holds ``pipeline_status["scanning"]``.  Scan
                 does additional doc_status reads during its classification
@@ -332,6 +338,8 @@ class _PipelineMixin:
             process_options = [process_options] * len(input)
         if isinstance(chunk_options, dict):
             chunk_options = [chunk_options] * len(input)
+        if isinstance(context_chunk_headers, str):
+            context_chunk_headers = [context_chunk_headers] * len(input)
 
         # If file_paths is provided, ensure it matches the number of documents
         if file_paths is not None:
@@ -365,6 +373,12 @@ class _PipelineMixin:
         if chunk_options is not None and len(chunk_options) != len(input):
             raise ValueError(
                 "Number of chunk_options dicts must match the number of documents"
+            )
+        if context_chunk_headers is not None and len(context_chunk_headers) != len(
+            input
+        ):
+            raise ValueError(
+                "Number of context chunk headers must match the number of documents"
             )
 
         def _parse_engine_at(index: int) -> str | None:
@@ -411,6 +425,13 @@ class _PipelineMixin:
             if chunk_options is not None:
                 return slim_chunk_options(chunk_options[index], doc_options)
             return resolve_chunk_options(self.addon_params, process_options=doc_options)
+
+        def _context_chunk_header_at(index: int) -> str:
+            if context_chunk_headers is None:
+                return ""
+            return sanitize_text_for_encoding(
+                str(context_chunk_headers[index] or "").strip()
+            )
 
         # 1. Validate ids and build contents (when lightrag: no content dedup, content may be empty)
         if ids is not None:
@@ -525,6 +546,8 @@ class _PipelineMixin:
             options_str = _process_options_at(index)
             if options_str:
                 content_data["process_options"] = options_str
+            if header := _context_chunk_header_at(index):
+                content_data["context_chunk_header"] = header
             # Always snapshot chunk_options at enqueue time — independent
             # of whether process_options selected a specific strategy —
             # so the per-doc parameters are frozen even when ``F``
@@ -2065,7 +2088,12 @@ class _PipelineMixin:
                         )
 
                 chunks = build_chunks_dict_from_chunking_result(
-                    chunking_result, doc_id=doc_id, file_path=file_path
+                    chunking_result,
+                    doc_id=doc_id,
+                    file_path=file_path,
+                    context_chunk_header=(content_data or {}).get(
+                        "context_chunk_header"
+                    ),
                 )
 
                 if not chunks:
