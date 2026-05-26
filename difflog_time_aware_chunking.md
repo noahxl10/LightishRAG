@@ -44,7 +44,7 @@ await rag.ainsert(
         "Source: Teams\n"
         "Conversation: Acme Implementation\n"
         "Timestamp: 2026-05-28T14:32:11-06:00\n"
-        "Participants: Priya Shah, Noah Alex"
+        "Participants: Priya Shah, Jordan Lee"
     ),
     context_chunk_metadata={
         "id": "teams-chat-123-msg-456",
@@ -55,7 +55,7 @@ await rag.ainsert(
         "occurred_at": "2026-05-28T14:32:11-06:00",
         "created_at": "2026-05-28T14:32:11-06:00",
         "modified_at": "2026-05-28T14:32:11-06:00",
-        "participants": ["Priya Shah", "Noah Alex"],
+        "participants": ["Priya Shah", "Jordan Lee"],
         "client": "Acme",
         "channel": "Implementation",
         "threadId": "abc",
@@ -68,7 +68,7 @@ The model sees a compact context payload like:
 ```json
 {
   "reference_id": "1",
-  "header": "Source: Teams\nConversation: Acme Implementation\nTimestamp: 2026-05-28T14:32:11-06:00\nParticipants: Priya Shah, Noah Alex",
+  "header": "Source: Teams\nConversation: Acme Implementation\nTimestamp: 2026-05-28T14:32:11-06:00\nParticipants: Priya Shah, Jordan Lee",
   "metadata": {
     "sourceUri": "teams://chat/123/messages/456",
     "conversationId": "chat-123",
@@ -144,13 +144,13 @@ POST /documents/text
 {
   "text": "Priya said the pilot date may move unless SSO is resolved...",
   "file_source": "teams-chat-123-msg-456.txt",
-  "context_chunk_header": "Source: Teams\nConversation: Acme Implementation\nTimestamp: 2026-05-28T14:32:11-06:00\nParticipants: Priya Shah, Noah Alex",
+  "context_chunk_header": "Source: Teams\nConversation: Acme Implementation\nTimestamp: 2026-05-28T14:32:11-06:00\nParticipants: Priya Shah, Jordan Lee",
   "context_chunk_metadata": {
     "sourceType": "teams-message",
     "sourceUri": "teams://chat/123/messages/456",
     "conversationId": "chat-123",
     "occurred_at": "2026-05-28T14:32:11-06:00",
-    "participants": ["Priya Shah", "Noah Alex"]
+    "participants": ["Priya Shah", "Jordan Lee"]
   }
 }
 ```

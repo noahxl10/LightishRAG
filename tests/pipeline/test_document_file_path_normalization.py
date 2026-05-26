@@ -313,7 +313,7 @@ def test_chunk_metadata_filter_matches_time_and_exact_fields():
         "context_chunk_metadata": {
             "conversationId": "chat-123",
             "occurred_at": "2026-05-28T14:32:11-06:00",
-            "participants": ["Priya Shah", "Noah Alex"],
+            "participants": ["Priya Shah", "Jordan Lee"],
         }
     }
 
