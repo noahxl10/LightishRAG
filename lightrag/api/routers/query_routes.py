@@ -103,6 +103,11 @@ class QueryRequest(BaseModel):
         description="If True, includes actual chunk text content in references. Only applies when include_references=True. Useful for evaluation and debugging.",
     )
 
+    chunk_metadata_filter: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Optional exact chunk metadata filter applied before semantic search where supported.",
+    )
+
     stream: Optional[bool] = Field(
         default=True,
         description="If True, enables streaming output for real-time responses. Only affects /query/stream endpoint.",

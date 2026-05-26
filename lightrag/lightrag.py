@@ -1237,6 +1237,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         file_paths: str | list[str] | None = None,
         track_id: str | None = None,
         context_chunk_headers: str | list[str] | None = None,
+        context_chunk_metadata: dict | list[dict] | None = None,
     ) -> str:
         """Sync Insert documents with checkpoint support
 
@@ -1251,6 +1252,8 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             track_id: tracking ID for monitoring processing status, if not provided, will be generated
             context_chunk_headers: optional header text to include with every
                 retrieved context chunk for each document
+            context_chunk_metadata: optional structured metadata to store with
+                each document's chunks for exact timestamp/source filtering
 
         Returns:
             str: tracking ID for monitoring processing status
@@ -1265,6 +1268,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 file_paths,
                 track_id,
                 context_chunk_headers,
+                context_chunk_metadata,
             )
         )
 
@@ -1277,6 +1281,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
         file_paths: str | list[str] | None = None,
         track_id: str | None = None,
         context_chunk_headers: str | list[str] | None = None,
+        context_chunk_metadata: dict | list[dict] | None = None,
     ) -> str:
         """Async Insert documents with checkpoint support
 
@@ -1291,6 +1296,8 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             track_id: tracking ID for monitoring processing status, if not provided, will be generated
             context_chunk_headers: optional header text to include with every
                 retrieved context chunk for each document
+            context_chunk_metadata: optional structured metadata to store with
+                each document's chunks for exact timestamp/source filtering
 
         Returns:
             str: tracking ID for monitoring processing status
@@ -1318,6 +1325,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
             track_id,
             chunk_options=chunk_opts,
             context_chunk_headers=context_chunk_headers,
+            context_chunk_metadata=context_chunk_metadata,
         )
         await self.apipeline_process_enqueue_documents()
 
@@ -1479,6 +1487,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 context_chunk_header = sanitize_text_for_encoding(
                     str(chunk_data.get("context_chunk_header") or "").strip()
                 )
+                context_chunk_metadata = chunk_data.get("context_chunk_metadata")
 
                 chunk_entry = {
                     "content": chunk_content,
@@ -1493,6 +1502,8 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 }
                 if context_chunk_header:
                     chunk_entry["context_chunk_header"] = context_chunk_header
+                if isinstance(context_chunk_metadata, dict):
+                    chunk_entry["context_chunk_metadata"] = context_chunk_metadata
                 all_chunks_data[chunk_id] = chunk_entry
                 chunk_to_source_map[source_id] = chunk_id
                 update_storage = True

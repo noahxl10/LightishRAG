@@ -41,6 +41,7 @@ from lightrag.utils import (
     convert_to_user_format,
     generate_reference_list_from_chunks,
     apply_source_ids_limit,
+    chunk_matches_metadata_filter,
     merge_source_ids,
     make_relation_chunk_key,
     _cooperative_yield,
@@ -92,18 +93,18 @@ def _warn_deprecated_query_model_func(context: str) -> None:
     )
 
 
-def _context_chunk_payload(chunk: dict[str, Any]) -> dict[str, str]:
+def _context_chunk_payload(chunk: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "reference_id": chunk["reference_id"],
+    }
     header = str(chunk.get("context_chunk_header") or "").strip()
     if header:
-        return {
-            "reference_id": chunk["reference_id"],
-            "header": header,
-            "content": chunk["content"],
-        }
-    return {
-        "reference_id": chunk["reference_id"],
-        "content": chunk["content"],
-    }
+        payload["header"] = header
+    metadata = chunk.get("context_chunk_metadata")
+    if isinstance(metadata, dict) and metadata:
+        payload["metadata"] = metadata
+    payload["content"] = chunk["content"]
+    return payload
 
 
 def _get_relationship_vdb_timeout_seconds(global_config: dict[str, Any]) -> float:
@@ -4175,9 +4176,19 @@ async def _get_vector_context(
         search_top_k = query_param.chunk_top_k or query_param.top_k
         cosine_threshold = chunks_vdb.cosine_better_than_threshold
 
-        results = await chunks_vdb.query(
-            query, top_k=search_top_k, query_embedding=query_embedding
-        )
+        metadata_filter = query_param.chunk_metadata_filter
+        try:
+            results = await chunks_vdb.query(
+                query,
+                top_k=search_top_k,
+                query_embedding=query_embedding,
+                metadata_filter=metadata_filter,
+            )
+        except TypeError:
+            fallback_top_k = search_top_k * 10 if metadata_filter else search_top_k
+            results = await chunks_vdb.query(
+                query, top_k=fallback_top_k, query_embedding=query_embedding
+            )
         if not results:
             logger.info(
                 f"Naive query: 0 chunks (chunk_top_k:{search_top_k} cosine:{cosine_threshold})"
@@ -4186,15 +4197,24 @@ async def _get_vector_context(
 
         valid_chunks = []
         for result in results:
-            if "content" in result:
+            if "content" in result and chunk_matches_metadata_filter(
+                result, metadata_filter
+            ):
                 chunk_with_metadata = {
+                    **{
+                        k: v
+                        for k, v in result.items()
+                        if k not in {"vector", "__vector__", "__metrics__"}
+                    },
                     "content": result["content"],
                     "created_at": result.get("created_at", None),
                     "file_path": result.get("file_path", "unknown_source"),
-                    "source_type": "vector",  # Mark the source type
-                    "chunk_id": result.get("id"),  # Add chunk_id for deduplication
+                    "source_type": result.get("source_type", "vector"),
+                    "chunk_id": result.get("id"),
                 }
                 valid_chunks.append(chunk_with_metadata)
+                if len(valid_chunks) >= search_top_k:
+                    break
 
         logger.info(
             f"Naive query: {len(valid_chunks)} chunks (chunk_top_k:{search_top_k} cosine:{cosine_threshold})"

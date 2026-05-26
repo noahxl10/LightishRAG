@@ -1385,6 +1385,7 @@ class PostgreSQLDB:
             ("heading", "JSONB NULL DEFAULT '{}'::jsonb"),
             ("sidecar", "JSONB NULL DEFAULT '{}'::jsonb"),
             ("context_chunk_header", "TEXT NULL"),
+            ("context_chunk_metadata", "JSONB NULL DEFAULT '{}'::jsonb"),
         ]
         try:
             existing = await self.query(
@@ -2439,6 +2440,16 @@ class PGKVStorage(BaseKVStorage):
                 sidecar = {}
             response["sidecar"] = sidecar
 
+            context_chunk_metadata = response.get("context_chunk_metadata")
+            if isinstance(context_chunk_metadata, str):
+                try:
+                    context_chunk_metadata = json.loads(context_chunk_metadata)
+                except json.JSONDecodeError:
+                    context_chunk_metadata = {}
+            if not isinstance(context_chunk_metadata, dict):
+                context_chunk_metadata = {}
+            response["context_chunk_metadata"] = context_chunk_metadata
+
             create_time = response.get("create_time", 0)
             update_time = response.get("update_time", 0)
             response["create_time"] = create_time
@@ -2606,6 +2617,16 @@ class PGKVStorage(BaseKVStorage):
                     sidecar = {}
                 result["sidecar"] = sidecar
 
+                context_chunk_metadata = result.get("context_chunk_metadata")
+                if isinstance(context_chunk_metadata, str):
+                    try:
+                        context_chunk_metadata = json.loads(context_chunk_metadata)
+                    except json.JSONDecodeError:
+                        context_chunk_metadata = {}
+                if not isinstance(context_chunk_metadata, dict):
+                    context_chunk_metadata = {}
+                result["context_chunk_metadata"] = context_chunk_metadata
+
                 create_time = result.get("create_time", 0)
                 update_time = result.get("update_time", 0)
                 result["create_time"] = create_time
@@ -2766,7 +2787,7 @@ class PGKVStorage(BaseKVStorage):
             for i, (k, v) in enumerate(data.items(), start=1):
                 # Tuple order must match SQL: (workspace, id, tokens, chunk_order_index,
                 #   full_doc_id, content, file_path, llm_cache_list, heading, sidecar,
-                #   context_chunk_header, create_time, update_time)
+                #   context_chunk_header, context_chunk_metadata, create_time, update_time)
                 batch_values.append(
                     (
                         self.workspace,
@@ -2780,6 +2801,7 @@ class PGKVStorage(BaseKVStorage):
                         json.dumps(v.get("heading") or {}),
                         json.dumps(v.get("sidecar") or {}),
                         v.get("context_chunk_header") or None,
+                        json.dumps(v.get("context_chunk_metadata") or {}),
                         current_time,
                         current_time,
                     )
@@ -6828,6 +6850,7 @@ TABLES = {
                     heading JSONB NULL DEFAULT '{}'::jsonb,
                     sidecar JSONB NULL DEFAULT '{}'::jsonb,
                     context_chunk_header TEXT NULL,
+                    context_chunk_metadata JSONB NULL DEFAULT '{}'::jsonb,
                     create_time TIMESTAMP(0) DEFAULT CURRENT_TIMESTAMP,
                     update_time TIMESTAMP(0) DEFAULT CURRENT_TIMESTAMP,
 	                CONSTRAINT LIGHTRAG_DOC_CHUNKS_PK PRIMARY KEY (workspace, id)
@@ -6979,6 +7002,7 @@ SQL_TEMPLATES = {
                                 COALESCE(heading, '{}'::jsonb) as heading,
                                 COALESCE(sidecar, '{}'::jsonb) as sidecar,
                                 COALESCE(context_chunk_header, '') as context_chunk_header,
+                                COALESCE(context_chunk_metadata, '{}'::jsonb) as context_chunk_metadata,
                                 EXTRACT(EPOCH FROM create_time)::BIGINT as create_time,
                                 EXTRACT(EPOCH FROM update_time)::BIGINT as update_time
                                 FROM LIGHTRAG_DOC_CHUNKS WHERE workspace=$1 AND id=$2
@@ -7004,6 +7028,7 @@ SQL_TEMPLATES = {
                                   COALESCE(heading, '{}'::jsonb) as heading,
                                   COALESCE(sidecar, '{}'::jsonb) as sidecar,
                                   COALESCE(context_chunk_header, '') as context_chunk_header,
+                                  COALESCE(context_chunk_metadata, '{}'::jsonb) as context_chunk_metadata,
                                   EXTRACT(EPOCH FROM create_time)::BIGINT as create_time,
                                   EXTRACT(EPOCH FROM update_time)::BIGINT as update_time
                                    FROM LIGHTRAG_DOC_CHUNKS WHERE workspace=$1 AND id = ANY($2)
@@ -7111,8 +7136,9 @@ SQL_TEMPLATES = {
                                      """,
     "upsert_text_chunk": """INSERT INTO LIGHTRAG_DOC_CHUNKS (workspace, id, tokens,
                       chunk_order_index, full_doc_id, content, file_path, llm_cache_list,
-                      heading, sidecar, context_chunk_header, create_time, update_time)
-                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                      heading, sidecar, context_chunk_header, context_chunk_metadata,
+                      create_time, update_time)
+                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                       ON CONFLICT (workspace,id) DO UPDATE
                       SET tokens=EXCLUDED.tokens,
                       chunk_order_index=EXCLUDED.chunk_order_index,
@@ -7123,6 +7149,7 @@ SQL_TEMPLATES = {
                       heading=EXCLUDED.heading,
                       sidecar=EXCLUDED.sidecar,
                       context_chunk_header=EXCLUDED.context_chunk_header,
+                      context_chunk_metadata=EXCLUDED.context_chunk_metadata,
                       update_time = EXCLUDED.update_time
                      """,
     "upsert_full_entities": """INSERT INTO LIGHTRAG_FULL_ENTITIES (workspace, id, entity_names, count,

@@ -3267,6 +3267,93 @@ async def apply_rerank_if_enabled(
         return retrieved_docs
 
 
+
+
+_DEFAULT_TIME_METADATA_FIELDS = (
+    "occurred_at",
+    "occurredAt",
+    "message_at",
+    "messageAt",
+    "meeting_at",
+    "meetingAt",
+    "source_modified_at",
+    "sourceModifiedAt",
+    "modified_at",
+    "modifiedAt",
+    "created_at",
+    "createdAt",
+)
+
+
+def _metadata_value(chunk: dict[str, Any], field: str) -> Any:
+    metadata = chunk.get("context_chunk_metadata")
+    if isinstance(metadata, dict) and field in metadata:
+        return metadata[field]
+    return chunk.get(field)
+
+
+def _parse_metadata_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def chunk_matches_metadata_filter(
+    chunk: dict[str, Any], metadata_filter: dict[str, Any] | None
+) -> bool:
+    if not metadata_filter:
+        return True
+
+    equals = metadata_filter.get("equals")
+    if isinstance(equals, dict):
+        for field, expected in equals.items():
+            if _metadata_value(chunk, str(field)) != expected:
+                return False
+
+    contains = metadata_filter.get("contains")
+    if isinstance(contains, dict):
+        for field, expected in contains.items():
+            value = _metadata_value(chunk, str(field))
+            if isinstance(value, list):
+                if expected not in value:
+                    return False
+            elif isinstance(value, str):
+                if str(expected) not in value:
+                    return False
+            else:
+                return False
+
+    time_filter = metadata_filter.get("time")
+    if isinstance(time_filter, dict):
+        start = _parse_metadata_datetime(time_filter.get("start"))
+        end = _parse_metadata_datetime(time_filter.get("end"))
+        fields = time_filter.get("fields") or _DEFAULT_TIME_METADATA_FIELDS
+        if not isinstance(fields, list | tuple):
+            fields = _DEFAULT_TIME_METADATA_FIELDS
+        matched_time = False
+        for field in fields:
+            occurred = _parse_metadata_datetime(_metadata_value(chunk, str(field)))
+            if occurred is None:
+                continue
+            if start is not None and occurred < start:
+                continue
+            if end is not None and occurred >= end:
+                continue
+            matched_time = True
+            break
+        if not matched_time:
+            return False
+
+    return True
+
 async def process_chunks_unified(
     query: str,
     unique_chunks: list[dict],
@@ -3828,6 +3915,9 @@ def convert_to_user_format(
         context_chunk_header = str(chunk.get("context_chunk_header") or "").strip()
         if context_chunk_header:
             chunk_data["context_chunk_header"] = context_chunk_header
+        context_chunk_metadata = chunk.get("context_chunk_metadata")
+        if isinstance(context_chunk_metadata, dict):
+            chunk_data["context_chunk_metadata"] = context_chunk_metadata
         formatted_chunks.append(chunk_data)
 
     logger.debug(
