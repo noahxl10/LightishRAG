@@ -1,240 +1,213 @@
-# Difflog: Timestamped chunk metadata, context headers, and metadata-first filtering
+# Difflog: Custom Context Chunk Headers
 
 ## What changed
 
-This PR adds first-class support for storing timestamp/source metadata with chunks, rendering compact context headers for the model, and filtering chunks by exact metadata before semantic search where the vector backend supports it.
+This change adds first-class support for custom context chunk headers during normal document insertion flows.
 
-Supported insertion fields:
+Supported entry points now include:
 
-- `context_chunk_headers`: human-readable compact context text shown to the model with retrieved chunks.
-- `context_chunk_metadata`: structured metadata stored with chunks for exact filtering and audit output.
+- Python sync API: `LightRAG.insert(..., context_chunk_headers=...)`
+- Python async API: `await LightRAG.ainsert(..., context_chunk_headers=...)`
+- Pipeline API: `await rag.apipeline_enqueue_documents(..., context_chunk_headers=...)`
+- REST single-text insert: `POST /documents/text` with `context_chunk_header`
+- REST batch-text insert: `POST /documents/texts` with `context_chunk_headers`
+- Custom KG insert chunks may also carry `context_chunk_header`
 
-Supported query field:
-
-- `chunk_metadata_filter`: exact metadata filter used by retrieval.
-
-The default NanoVectorDB backend applies `chunk_metadata_filter` before vector similarity search. Backends that do not support native metadata filtering fall back to over-fetching and post-filtering so behavior remains correct, though less optimal.
-
-## Why this exists
-
-Embeddings are weak at exact dates and exact metadata. A query like:
-
-> What did this conversation entail on May 28th?
-
-should not rely on semantic similarity for `May 28th`. The reliable pattern is:
-
-1. Normalize the user's date into a concrete range, for example:
-   - `2026-05-28T00:00:00-06:00`
-   - `2026-05-29T00:00:00-06:00`
-2. Filter chunks by structured timestamp metadata.
-3. Run semantic search only inside the filtered candidate set.
-4. Answer with citations containing source IDs and timestamps.
-
-This change gives LightRAG the chunk-level metadata and filter hooks needed for that pattern.
-
-## Chunk shape
-
-A timestamped conversation chunk can now be inserted with metadata like:
-
-```python
-await rag.ainsert(
-    "Priya said the pilot date may move unless SSO is resolved...",
-    file_paths="teams-chat-123-msg-456.txt",
-    context_chunk_headers=(
-        "Source: Teams\n"
-        "Conversation: Acme Implementation\n"
-        "Timestamp: 2026-05-28T14:32:11-06:00\n"
-        "Participants: Priya Shah, Noah Alex"
-    ),
-    context_chunk_metadata={
-        "id": "teams-chat-123-msg-456",
-        "sourceType": "teams-message",
-        "sourceUri": "teams://chat/123/messages/456",
-        "conversationId": "chat-123",
-        "title": "Teams conversation with Acme",
-        "occurred_at": "2026-05-28T14:32:11-06:00",
-        "created_at": "2026-05-28T14:32:11-06:00",
-        "modified_at": "2026-05-28T14:32:11-06:00",
-        "participants": ["Priya Shah", "Noah Alex"],
-        "client": "Acme",
-        "channel": "Implementation",
-        "threadId": "abc",
-    },
-)
-```
-
-The model sees a compact context payload like:
+When a document is chunked, the configured header is stored on every chunk created from that document. Query context then emits that header separately from the chunk body:
 
 ```json
 {
   "reference_id": "1",
-  "header": "Source: Teams\nConversation: Acme Implementation\nTimestamp: 2026-05-28T14:32:11-06:00\nParticipants: Priya Shah, Noah Alex",
-  "metadata": {
-    "sourceUri": "teams://chat/123/messages/456",
-    "conversationId": "chat-123",
-    "occurred_at": "2026-05-28T14:32:11-06:00"
-  },
-  "content": "Priya said the pilot date may move unless SSO is resolved..."
+  "header": "Title: Alpha Report\nSection: Revenue",
+  "content": "The actual retrieved chunk text..."
 }
 ```
 
-The stored chunk body is not mutated. Headers and structured metadata are separate fields.
+The chunk `content` is not mutated. The header is stored and rendered as metadata/context alongside it.
 
-## Query filtering
+## Files changed
 
-Exact timestamp filtering is provided through `QueryParam.chunk_metadata_filter`:
+- `lightrag/lightrag.py`
+  - Added `context_chunk_headers` to `insert()` and `ainsert()`.
+  - Forwards headers into the normal enqueue pipeline.
+  - Preserves `context_chunk_header` on custom KG chunks.
+
+- `lightrag/pipeline.py`
+  - Added `context_chunk_headers` to `apipeline_enqueue_documents()`.
+  - Accepts either one string broadcast to all inputs or a list aligned with `input`.
+  - Stores sanitized per-document headers in `full_docs` metadata and applies them to generated chunks.
+
+- `lightrag/utils_pipeline.py`
+  - `build_chunks_dict_from_chunking_result()` can attach a document-level `context_chunk_header` to each produced chunk.
+  - Existing chunk-level headers are preserved, so parser-produced or custom per-chunk headers can override the document header.
+
+- `lightrag/operate.py`
+  - Query context chunk payloads now include `header` when `context_chunk_header` is present.
+  - Both KG-backed query context and naive query context use the same formatting helper.
+
+- `lightrag/utils.py`
+  - `convert_to_user_format()` includes `context_chunk_header` in structured chunk output.
+
+- `lightrag/base.py`
+  - `TextChunkSchema` declares optional `context_chunk_header`.
+
+- `lightrag/api/routers/document_routes.py`
+  - `InsertTextRequest` now accepts `context_chunk_header`.
+  - `InsertTextsRequest` now accepts `context_chunk_headers`.
+  - REST text insertion forwards headers into the pipeline.
+  - Batch requests validate that `context_chunk_headers`, when provided, matches the number of texts.
+
+- `lightrag/kg/postgres_impl.py`
+  - Adds `context_chunk_header` to `LIGHTRAG_DOC_CHUNKS` DDL.
+  - Existing PostgreSQL deployments get the column through the chunk metadata migration path.
+  - Text chunk upsert and select templates preserve and return the header.
+
+- `tests/pipeline/test_document_file_path_normalization.py`
+  - Added coverage for Python API forwarding, REST helper forwarding, chunk storage behavior, chunk-level override preservation, and query-context payload formatting.
+
+## How to use
+
+### Python: one document
 
 ```python
-from lightrag import QueryParam
-
-result = await rag.aquery(
-    "What did this conversation entail? Summarize topics, decisions, and action items.",
-    param=QueryParam(
-        mode="naive",
-        chunk_metadata_filter={
-            "equals": {
-                "conversationId": "chat-123",
-            },
-            "time": {
-                "start": "2026-05-28T00:00:00-06:00",
-                "end": "2026-05-29T00:00:00-06:00",
-                "fields": [
-                    "occurred_at",
-                    "message_at",
-                    "meeting_at",
-                    "source_modified_at",
-                ],
-            },
-        },
-    ),
+await rag.ainsert(
+    "Revenue increased by 14% in Q4...",
+    file_paths="alpha-report.txt",
+    context_chunk_headers="Title: Alpha Report\nSection: Q4 Revenue",
 )
 ```
 
-The time `end` bound is exclusive.
+The same value is attached to every chunk produced from that document.
 
-The filter supports:
+### Python: batch documents
 
-```json
-{
-  "equals": {"conversationId": "chat-123"},
-  "contains": {"participants": "Priya Shah"},
-  "time": {
-    "start": "2026-05-28T00:00:00-06:00",
-    "end": "2026-05-29T00:00:00-06:00",
-    "fields": ["occurred_at", "message_at", "meeting_at", "source_modified_at"]
-  }
-}
+```python
+await rag.ainsert(
+    [
+        "Alpha report body...",
+        "Beta report body...",
+    ],
+    file_paths=["alpha.txt", "beta.txt"],
+    context_chunk_headers=[
+        "Title: Alpha Report\nDepartment: Finance",
+        "Title: Beta Report\nDepartment: Operations",
+    ],
+)
 ```
 
-If `fields` is omitted, the time filter checks common timestamp names:
+The list length must match the number of input documents.
 
-- `occurred_at` / `occurredAt`
-- `message_at` / `messageAt`
-- `meeting_at` / `meetingAt`
-- `source_modified_at` / `sourceModifiedAt`
-- `modified_at` / `modifiedAt`
-- `created_at` / `createdAt`
+### Python: broadcast one header to all documents
 
-## REST usage
+```python
+await rag.ainsert(
+    ["Part one...", "Part two..."],
+    file_paths=["part-1.txt", "part-2.txt"],
+    context_chunk_headers="Corpus: 2026 Internal Handbook",
+)
+```
 
-### Insert one text
+A single string is broadcast to all inputs.
+
+### Sync API
+
+```python
+rag.insert(
+    "Policy text...",
+    file_paths="policy.txt",
+    context_chunk_headers="Document: Policy Manual\nVersion: 2026",
+)
+```
+
+### REST: single text
 
 ```json
 POST /documents/text
 {
-  "text": "Priya said the pilot date may move unless SSO is resolved...",
-  "file_source": "teams-chat-123-msg-456.txt",
-  "context_chunk_header": "Source: Teams\nConversation: Acme Implementation\nTimestamp: 2026-05-28T14:32:11-06:00\nParticipants: Priya Shah, Noah Alex",
-  "context_chunk_metadata": {
-    "sourceType": "teams-message",
-    "sourceUri": "teams://chat/123/messages/456",
-    "conversationId": "chat-123",
-    "occurred_at": "2026-05-28T14:32:11-06:00",
-    "participants": ["Priya Shah", "Noah Alex"]
-  }
+  "text": "Revenue increased by 14% in Q4...",
+  "file_source": "alpha-report.txt",
+  "context_chunk_header": "Title: Alpha Report\nSection: Q4 Revenue"
 }
 ```
 
-### Insert multiple texts
+### REST: multiple texts
 
 ```json
 POST /documents/texts
 {
-  "texts": ["Message one...", "Message two..."],
-  "file_sources": ["msg-1.txt", "msg-2.txt"],
-  "context_chunk_headers": [
-    "Source: Teams\nTimestamp: 2026-05-28T14:32:11-06:00",
-    "Source: Teams\nTimestamp: 2026-05-28T15:10:00-06:00"
+  "texts": [
+    "Alpha report body...",
+    "Beta report body..."
   ],
-  "context_chunk_metadata": [
-    {"conversationId": "chat-123", "occurred_at": "2026-05-28T14:32:11-06:00"},
-    {"conversationId": "chat-123", "occurred_at": "2026-05-28T15:10:00-06:00"}
+  "file_sources": [
+    "alpha.txt",
+    "beta.txt"
+  ],
+  "context_chunk_headers": [
+    "Title: Alpha Report\nDepartment: Finance",
+    "Title: Beta Report\nDepartment: Operations"
   ]
 }
 ```
 
-The metadata/header arrays must match the number of texts.
+`context_chunk_headers` is optional. If provided, it must have the same number of entries as `texts`.
 
-### Query with metadata filter
+### Custom KG chunks
 
-```json
-POST /query
-{
-  "query": "What did this conversation entail? Summarize topics, decisions, and action items.",
-  "mode": "naive",
-  "chunk_metadata_filter": {
-    "equals": {"conversationId": "chat-123"},
-    "time": {
-      "start": "2026-05-28T00:00:00-06:00",
-      "end": "2026-05-29T00:00:00-06:00"
-    }
-  }
-}
+```python
+await rag.ainsert_custom_kg({
+    "chunks": [
+        {
+            "source_id": "chunk-source-1",
+            "content": "Chunk body...",
+            "file_path": "source.txt",
+            "context_chunk_header": "Title: Source\nSection: Background",
+        }
+    ],
+    "entities": [],
+    "relationships": [],
+})
 ```
 
-## Files changed
+## Why use this
 
-- `lightrag/base.py`
-  - Adds optional `context_chunk_metadata` to `TextChunkSchema`.
-  - Adds `QueryParam.chunk_metadata_filter`.
+Use context chunk headers when the raw chunk body does not carry enough source context by itself.
 
-- `lightrag/lightrag.py`
-  - Adds `context_chunk_metadata` to `insert()` and `ainsert()`.
-  - Preserves `context_chunk_header` and `context_chunk_metadata` in custom KG chunks.
+Good header candidates:
 
-- `lightrag/pipeline.py`
-  - Accepts per-document `context_chunk_headers` and `context_chunk_metadata`.
-  - Validates list lengths.
-  - Stores sanitized metadata/header values with generated chunks.
+- Document title
+- Section or heading path
+- Page label or page number
+- Tenant/customer/project name
+- Report date or version
+- Dataset partition
+- Source system identifier
+- Any concise metadata the model should see while answering
 
-- `lightrag/utils_pipeline.py`
-  - Attaches document-level headers and metadata to produced chunk records.
-  - Preserves chunk-level overrides.
+This improves retrieval-grounded answering because chunks often lose surrounding document structure after splitting. A chunk like:
 
-- `lightrag/utils.py`
-  - Adds `chunk_matches_metadata_filter()` for exact metadata/time matching.
-  - Includes `context_chunk_metadata` in structured user-facing chunk output.
+```text
+Revenue increased by 14% compared with the previous quarter.
+```
 
-- `lightrag/operate.py`
-  - Uses metadata filters during chunk vector retrieval.
-  - Emits `header` and `metadata` in query context chunks when present.
+is more useful to the model when paired with:
 
-- `lightrag/kg/nano_vector_db_impl.py`
-  - Applies metadata filters before vector similarity search using NanoVectorDB's filter hook.
+```text
+Title: Alpha Q4 Board Report
+Section: Financial Results
+Period: 2026 Q4
+```
 
-- `lightrag/kg/postgres_impl.py`
-  - Adds `context_chunk_header` and `context_chunk_metadata` columns to text chunk storage.
-  - Migrates existing deployments.
-  - Preserves both fields in upsert/select paths.
+The header gives the model grounding without polluting the stored chunk content or changing embeddings for existing content formatting conventions.
 
-- `lightrag/api/routers/document_routes.py`
-  - Adds REST insertion fields for headers and metadata.
+## Design notes
 
-- `lightrag/api/routers/query_routes.py`
-  - Adds REST query field `chunk_metadata_filter`.
-
-- `tests/pipeline/test_document_file_path_normalization.py`
-  - Adds regression coverage for API forwarding, chunk storage, metadata filtering, and context payload formatting.
+- Headers are stored separately as `context_chunk_header`; chunk `content` remains unchanged.
+- Empty or whitespace-only headers are ignored.
+- Headers are sanitized with the same text encoding cleanup used for normal inserted content.
+- Document-level headers apply to all generated chunks from that document.
+- Existing per-chunk `context_chunk_header` values are preserved and take precedence over the document-level header.
+- Query context emits the header as `header`, while structured raw data keeps the storage field name `context_chunk_header`.
 
 ## Verification performed
 
@@ -242,10 +215,10 @@ POST /query
 ./scripts/test.sh tests/pipeline/test_document_file_path_normalization.py
 ```
 
-Result: `12 passed`
+Result: `10 passed`
 
 ```bash
-uv run ruff check lightrag/base.py lightrag/utils_pipeline.py lightrag/pipeline.py lightrag/lightrag.py lightrag/operate.py lightrag/utils.py lightrag/api/routers/document_routes.py lightrag/api/routers/query_routes.py lightrag/kg/postgres_impl.py lightrag/kg/nano_vector_db_impl.py tests/pipeline/test_document_file_path_normalization.py
+uv run ruff check lightrag/base.py lightrag/utils_pipeline.py lightrag/pipeline.py lightrag/lightrag.py lightrag/operate.py lightrag/utils.py lightrag/api/routers/document_routes.py lightrag/kg/postgres_impl.py tests/pipeline/test_document_file_path_normalization.py
 ```
 
 Result: passed
