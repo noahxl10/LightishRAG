@@ -42,6 +42,7 @@ def build_chunks_dict_from_chunking_result(
     doc_id: str,
     file_path: str,
     context_chunk_header: str | None = None,
+    context_chunk_metadata: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Assemble the per-doc chunks dict written into chunks_vdb / text_chunks.
 
@@ -97,6 +98,10 @@ def build_chunks_dict_from_chunking_result(
             chunk_entry.get("context_chunk_header") or ""
         ).strip():
             chunk_entry["context_chunk_header"] = context_chunk_header
+        if context_chunk_metadata and not isinstance(
+            chunk_entry.get("context_chunk_metadata"), dict
+        ):
+            chunk_entry["context_chunk_metadata"] = context_chunk_metadata
         chunks[chunk_key] = chunk_entry
     return chunks
 

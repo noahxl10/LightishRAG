@@ -28,6 +28,7 @@ class DummyRAG:
         track_id=None,
         process_options=None,
         context_chunk_headers=None,
+        context_chunk_metadata=None,
     ):
         self.enqueued_calls.append(
             {
@@ -36,6 +37,7 @@ class DummyRAG:
                 "track_id": track_id,
                 "process_options": process_options,
                 "context_chunk_headers": context_chunk_headers,
+                "context_chunk_metadata": context_chunk_metadata,
             }
         )
 
@@ -101,6 +103,7 @@ async def test_pipeline_index_texts_normalizes_file_sources_to_basename():
             "track_id": "track-1",
             "process_options": PROCESS_OPTION_CHUNK_FIXED,
             "context_chunk_headers": None,
+            "context_chunk_metadata": None,
         }
     ]
     assert rag.processed is True
@@ -125,6 +128,7 @@ async def test_pipeline_index_texts_forwards_context_chunk_headers():
             "track_id": "track-headers",
             "process_options": PROCESS_OPTION_CHUNK_FIXED,
             "context_chunk_headers": ["Title: Alpha", "Title: Beta"],
+            "context_chunk_metadata": None,
         }
     ]
     assert rag.processed is True
@@ -154,6 +158,10 @@ async def test_ainsert_forwards_context_chunk_headers_to_pipeline():
         file_paths=["alpha.txt", "beta.txt"],
         track_id="track-headers",
         context_chunk_headers=["Title: Alpha", "Title: Beta"],
+        context_chunk_metadata=[
+            {"occurred_at": "2026-05-28T14:32:11-06:00"},
+            {"occurred_at": "2026-05-28T15:00:00-06:00"},
+        ],
     )
 
     assert track_id == "track-headers"
@@ -166,6 +174,10 @@ async def test_ainsert_forwards_context_chunk_headers_to_pipeline():
     assert captured["enqueue_kwargs"]["context_chunk_headers"] == [
         "Title: Alpha",
         "Title: Beta",
+    ]
+    assert captured["enqueue_kwargs"]["context_chunk_metadata"] == [
+        {"occurred_at": "2026-05-28T14:32:11-06:00"},
+        {"occurred_at": "2026-05-28T15:00:00-06:00"},
     ]
     assert captured["processed"] is True
 
@@ -240,6 +252,7 @@ def test_build_chunks_attaches_context_chunk_header_without_mutating_content():
     chunk = chunks["doc-1-chunk-000"]
     assert chunk["content"] == "body"
     assert chunk["context_chunk_header"] == "Title: Source"
+    assert "context_chunk_metadata" not in chunk
 
 
 def test_build_chunks_preserves_chunk_level_context_header():
@@ -275,3 +288,52 @@ def test_context_chunk_payload_emits_header_separately_from_content():
         "content": "body",
         "header": "Title: Source",
     }
+
+
+def test_build_chunks_attaches_context_chunk_metadata():
+    chunks = build_chunks_dict_from_chunking_result(
+        [{"content": "body", "tokens": 1, "chunk_order_index": 0}],
+        doc_id="doc-1",
+        file_path="source.txt",
+        context_chunk_metadata={
+            "sourceType": "teams-message",
+            "occurred_at": "2026-05-28T14:32:11-06:00",
+        },
+    )
+
+    chunk = chunks["doc-1-chunk-000"]
+    assert chunk["context_chunk_metadata"] == {
+        "sourceType": "teams-message",
+        "occurred_at": "2026-05-28T14:32:11-06:00",
+    }
+
+
+def test_chunk_metadata_filter_matches_time_and_exact_fields():
+    chunk = {
+        "context_chunk_metadata": {
+            "conversationId": "chat-123",
+            "occurred_at": "2026-05-28T14:32:11-06:00",
+            "participants": ["Priya Shah", "Jordan Lee"],
+        }
+    }
+
+    assert operate.chunk_matches_metadata_filter(
+        chunk,
+        {
+            "equals": {"conversationId": "chat-123"},
+            "contains": {"participants": "Priya Shah"},
+            "time": {
+                "start": "2026-05-28T00:00:00-06:00",
+                "end": "2026-05-29T00:00:00-06:00",
+            },
+        },
+    )
+    assert not operate.chunk_matches_metadata_filter(
+        chunk,
+        {
+            "time": {
+                "start": "2026-05-29T00:00:00-06:00",
+                "end": "2026-05-30T00:00:00-06:00",
+            }
+        },
+    )

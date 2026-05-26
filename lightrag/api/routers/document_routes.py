@@ -252,6 +252,10 @@ class InsertTextRequest(BaseModel):
         min_length=0,
         description="Optional header emitted with each retrieved context chunk for this text.",
     )
+    context_chunk_metadata: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="Optional structured metadata stored with retrieved context chunks.",
+    )
 
     @field_validator("text", mode="after")
     @classmethod
@@ -292,6 +296,11 @@ class InsertTextsRequest(BaseModel):
         default=None,
         min_length=0,
         description="Optional per-text headers emitted with retrieved context chunks.",
+    )
+    context_chunk_metadata: Optional[list[dict[str, Any]]] = Field(
+        default=None,
+        min_length=0,
+        description="Optional per-text structured metadata stored with retrieved context chunks.",
     )
 
     @field_validator("texts", mode="after")
@@ -2132,6 +2141,7 @@ async def pipeline_index_texts(
     file_sources: List[str] = None,
     track_id: str = None,
     context_chunk_headers: List[str] | None = None,
+    context_chunk_metadata: List[dict[str, Any]] | None = None,
 ):
     """Index a list of texts with track_id
 
@@ -2141,6 +2151,7 @@ async def pipeline_index_texts(
         file_sources: Sources of the texts
         track_id: Optional tracking ID
         context_chunk_headers: Optional per-text context chunk headers
+        context_chunk_metadata: Optional per-text context chunk metadata
     """
     if not texts:
         return
@@ -2155,6 +2166,8 @@ async def pipeline_index_texts(
         raise ValueError("File sources must be unique by filename")
     if context_chunk_headers is not None and len(context_chunk_headers) != len(texts):
         raise ValueError("Number of context chunk headers must match texts")
+    if context_chunk_metadata is not None and len(context_chunk_metadata) != len(texts):
+        raise ValueError("Number of context chunk metadata dicts must match texts")
 
     await rag.apipeline_enqueue_documents(
         input=texts,
@@ -2162,6 +2175,7 @@ async def pipeline_index_texts(
         track_id=track_id,
         process_options=PROCESS_OPTION_CHUNK_FIXED,
         context_chunk_headers=context_chunk_headers,
+        context_chunk_metadata=context_chunk_metadata,
     )
     await rag.apipeline_process_enqueue_documents()
 
@@ -3060,6 +3074,9 @@ def create_document_routes(
                         context_chunk_headers=[request.context_chunk_header]
                         if request.context_chunk_header is not None
                         else None,
+                        context_chunk_metadata=[request.context_chunk_metadata]
+                        if request.context_chunk_metadata is not None
+                        else None,
                     )
                 finally:
                     await _release_enqueue_slot(rag)
@@ -3140,6 +3157,14 @@ def create_document_routes(
                     detail="Number of context_chunk_headers must match texts",
                 )
 
+            if request.context_chunk_metadata is not None and len(
+                request.context_chunk_metadata
+            ) != len(request.texts):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Number of context_chunk_metadata entries must match texts",
+                )
+
             normalized_file_sources = [
                 normalize_file_path(file_source) for file_source in request.file_sources
             ]
@@ -3182,6 +3207,7 @@ def create_document_routes(
                         file_sources=normalized_file_sources,
                         track_id=track_id,
                         context_chunk_headers=request.context_chunk_headers,
+                        context_chunk_metadata=request.context_chunk_metadata,
                     )
                 finally:
                     await _release_enqueue_slot(rag)

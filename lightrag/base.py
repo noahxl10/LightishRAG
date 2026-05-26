@@ -78,6 +78,7 @@ class TextChunkSchema(TypedDict):
     full_doc_id: str
     chunk_order_index: int
     context_chunk_header: NotRequired[str]
+    context_chunk_metadata: NotRequired[dict[str, Any]]
 
 
 T = TypeVar("T")
@@ -178,6 +179,17 @@ class QueryParam:
     containing citation information for the retrieved content.
     """
 
+    chunk_metadata_filter: dict[str, Any] | None = None
+    """Optional exact metadata filter applied to text chunks before semantic search where supported.
+    Supported shape:
+    {
+      "time": {"start": ISO datetime, "end": ISO datetime, "fields": [metadata field names]},
+      "equals": {"field": value},
+      "contains": {"field": value}
+    }
+    Time end bounds are exclusive.
+    """
+
 
 @dataclass
 class StorageNameSpace(ABC):
@@ -270,7 +282,11 @@ class BaseVectorStorage(StorageNameSpace, ABC):
 
     @abstractmethod
     async def query(
-        self, query: str, top_k: int, query_embedding: list[float] = None
+        self,
+        query: str,
+        top_k: int,
+        query_embedding: list[float] = None,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Query the vector storage and retrieve top_k results.
 
@@ -279,6 +295,8 @@ class BaseVectorStorage(StorageNameSpace, ABC):
             top_k: Number of top results to return
             query_embedding: Optional pre-computed embedding for the query.
                            If provided, skips embedding computation for better performance.
+            metadata_filter: Optional exact chunk metadata filter. Backends that
+                           support it must apply it before vector similarity search.
         """
 
     @abstractmethod

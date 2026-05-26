@@ -11,6 +11,7 @@ from lightrag.file_atomic import atomic_write, reap_orphan_tmp_files
 from lightrag.utils import (
     logger,
     compute_mdhash_id,
+    chunk_matches_metadata_filter,
 )
 
 from lightrag.base import BaseVectorStorage
@@ -149,7 +150,11 @@ class NanoVectorDBStorage(BaseVectorStorage):
             )
 
     async def query(
-        self, query: str, top_k: int, query_embedding: list[float] = None
+        self,
+        query: str,
+        top_k: int,
+        query_embedding: list[float] = None,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         # Use provided embedding or compute it
         if query_embedding is not None:
@@ -162,10 +167,16 @@ class NanoVectorDBStorage(BaseVectorStorage):
             embedding = embedding[0]
 
         client = await self._get_client()
+        filter_lambda = (
+            (lambda dp: chunk_matches_metadata_filter(dp, metadata_filter))
+            if metadata_filter
+            else None
+        )
         results = client.query(
             query=embedding,
             top_k=top_k,
             better_than_threshold=self.cosine_better_than_threshold,
+            filter_lambda=filter_lambda,
         )
         results = [
             {

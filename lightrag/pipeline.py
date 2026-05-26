@@ -217,6 +217,7 @@ class _PipelineMixin:
         process_options: str | list[str] | None = None,
         chunk_options: dict | list[dict] | None = None,
         context_chunk_headers: str | list[str] | None = None,
+        context_chunk_metadata: dict | list[dict] | None = None,
         from_scan: bool = False,
     ) -> str:
         """
@@ -340,6 +341,8 @@ class _PipelineMixin:
             chunk_options = [chunk_options] * len(input)
         if isinstance(context_chunk_headers, str):
             context_chunk_headers = [context_chunk_headers] * len(input)
+        if isinstance(context_chunk_metadata, dict):
+            context_chunk_metadata = [context_chunk_metadata] * len(input)
 
         # If file_paths is provided, ensure it matches the number of documents
         if file_paths is not None:
@@ -379,6 +382,12 @@ class _PipelineMixin:
         ):
             raise ValueError(
                 "Number of context chunk headers must match the number of documents"
+            )
+        if context_chunk_metadata is not None and len(context_chunk_metadata) != len(
+            input
+        ):
+            raise ValueError(
+                "Number of context chunk metadata dicts must match the number of documents"
             )
 
         def _parse_engine_at(index: int) -> str | None:
@@ -432,6 +441,20 @@ class _PipelineMixin:
             return sanitize_text_for_encoding(
                 str(context_chunk_headers[index] or "").strip()
             )
+
+
+        def _context_chunk_metadata_at(index: int) -> dict[str, Any]:
+            if context_chunk_metadata is None:
+                return {}
+            raw = context_chunk_metadata[index]
+            if not isinstance(raw, dict):
+                return {}
+            return {
+                str(key): sanitize_text_for_encoding(str(value))
+                if isinstance(value, str)
+                else value
+                for key, value in raw.items()
+            }
 
         # 1. Validate ids and build contents (when lightrag: no content dedup, content may be empty)
         if ids is not None:
@@ -548,6 +571,8 @@ class _PipelineMixin:
                 content_data["process_options"] = options_str
             if header := _context_chunk_header_at(index):
                 content_data["context_chunk_header"] = header
+            if metadata := _context_chunk_metadata_at(index):
+                content_data["context_chunk_metadata"] = metadata
             # Always snapshot chunk_options at enqueue time — independent
             # of whether process_options selected a specific strategy —
             # so the per-doc parameters are frozen even when ``F``
@@ -2093,6 +2118,9 @@ class _PipelineMixin:
                     file_path=file_path,
                     context_chunk_header=(content_data or {}).get(
                         "context_chunk_header"
+                    ),
+                    context_chunk_metadata=(content_data or {}).get(
+                        "context_chunk_metadata"
                     ),
                 )
 
